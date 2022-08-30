@@ -139,6 +139,83 @@ func Test_Run_fails_when_opening_port(t *testing.T) {
 	assert.ErrorContains(t, err, "failed to open port")
 }
 
+func Test_Run_fails_to_soft_reset(t *testing.T) {
+	// Arrange
+	ctrl := gomock.NewController(t)
+	portFactory := mocks.NewMockPortFactory(ctrl)
+
+	port := mocks.NewMockPort(ctrl)
+	portFactory.EXPECT().
+		Open().
+		Return(port, nil)
+
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Close().
+		Return(nil)
+
+	sensor := sensironscd30.NewSensor(portFactory,
+		sensironscd30.WithRecoverableErrorHandler(func(err error) bool { return true }))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	group, ctx := errgroup.WithContext(ctx)
+
+	// Act
+	group.Go(func() error {
+		return sensor.Run(ctx)
+	})
+	err := group.Wait()
+
+	// Assert
+	assert.ErrorContains(t, err, "failed to reset sensor")
+}
+
+func Test_Run_fails_to_stop_continuous_measurement(t *testing.T) {
+	// Arrange
+	ctrl := gomock.NewController(t)
+	portFactory := mocks.NewMockPortFactory(ctrl)
+
+	port := mocks.NewMockPort(ctrl)
+	portFactory.EXPECT().
+		Open().
+		Return(port, nil)
+
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Close().
+		Return(nil)
+
+	sensor := sensironscd30.NewSensor(portFactory,
+		sensironscd30.WithRecoverableErrorHandler(func(err error) bool { return true }))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	group, ctx := errgroup.WithContext(ctx)
+
+	// Act
+	group.Go(func() error {
+		return sensor.Run(ctx)
+	})
+	err := group.Wait()
+
+	// Assert
+	assert.ErrorContains(t, err, "failed to stop continuous measurement")
+}
+
 func Test_Run_fails_to_trigger_continuous_measurement(t *testing.T) {
 	// Arrange
 	ctrl := gomock.NewController(t)
@@ -150,7 +227,16 @@ func Test_Run_fails_to_trigger_continuous_measurement(t *testing.T) {
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
 		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
@@ -184,10 +270,19 @@ func Test_Run_fails_to_set_measurement_interval(t *testing.T) {
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
 		Write([]byte{0x46, 0x00, 0x00, 0x02, 0xE3}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
 		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
@@ -221,6 +316,12 @@ func Test_Run_fails_to_get_data_ready_status(t *testing.T) {
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
@@ -228,6 +329,9 @@ func Test_Run_fails_to_get_data_ready_status(t *testing.T) {
 		Return(0, nil)
 	port.EXPECT().
 		Write([]byte{0x02, 0x02}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
 		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
@@ -261,6 +365,12 @@ func Test_Run_fails_to_read_data_ready_status(t *testing.T) {
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
@@ -271,6 +381,9 @@ func Test_Run_fails_to_read_data_ready_status(t *testing.T) {
 		Return(0, nil)
 	port.EXPECT().
 		Read(gomock.Any()).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
 		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
@@ -317,6 +430,12 @@ func Test_Run_fails_to_validate_crc_when_reading_data_ready_status(t *testing.T)
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
@@ -330,6 +449,9 @@ func Test_Run_fails_to_validate_crc_when_reading_data_ready_status(t *testing.T)
 		DoAndReturn(func(buf []byte) (int, error) {
 			return len(buf), nil
 		})
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
 		Return(nil)
@@ -363,6 +485,12 @@ func Test_Run_fails_to_read_measurement(t *testing.T) {
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
@@ -382,6 +510,9 @@ func Test_Run_fails_to_read_measurement(t *testing.T) {
 		})
 	port.EXPECT().
 		Write([]byte{0x03, 0x00}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
 		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
@@ -415,6 +546,12 @@ func Test_Run_fails_to_read_measurement_values(t *testing.T) {
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
@@ -437,6 +574,9 @@ func Test_Run_fails_to_read_measurement_values(t *testing.T) {
 		Return(0, nil)
 	port.EXPECT().
 		Read(gomock.Any()).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
 		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
@@ -471,6 +611,12 @@ func Test_Run_fails_to_validate_crc_while_reading_measurement_values(t *testing.
 		Return(port, nil)
 
 	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
 	port.EXPECT().
@@ -496,6 +642,9 @@ func Test_Run_fails_to_validate_crc_while_reading_measurement_values(t *testing.
 		DoAndReturn(func(buf []byte) (int, error) {
 			return len(buf), nil
 		})
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
 		Return(nil)
@@ -528,6 +677,12 @@ func Test_Run_returns_expected_measurements(t *testing.T) {
 		Open().
 		Return(port, nil)
 
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
 	port.EXPECT().
 		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
 		Return(0, nil)
@@ -588,6 +743,9 @@ func Test_Run_returns_expected_measurements(t *testing.T) {
 
 			return len(buf), nil
 		})
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
 	port.EXPECT().
 		Close().
 		Return(nil)

@@ -92,7 +92,28 @@ const (
 	setValueTimeout     time.Duration = 10 * time.Millisecond
 	readValueTimeout    time.Duration = 12 * time.Millisecond
 	measurementInterval time.Duration = 2 * time.Second
+	bootUpDuration      time.Duration = 2 * time.Second
 )
+
+func resetSensor(ctx context.Context, port coreio.Port) error {
+	err := softReset(ctx, port)
+	if err != nil {
+		return errors.Wrap(err, "failed to reset sensor")
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(bootUpDuration):
+	}
+
+	err = stopContinuousMeasurement(ctx, port)
+	if err != nil {
+		return errors.Wrap(err, "failed to stop continuous measurement")
+	}
+
+	return nil
+}
 
 // Run begins reading from the sensor and blocks until either an error occurs or the context is completed
 func (s *Sensor) Run(ctx context.Context) error {
@@ -105,12 +126,19 @@ func (s *Sensor) Run(ctx context.Context) error {
 			return errors.Wrap(err, "failed to open port")
 		}
 
+		defer resetSensor(context.Background(), port)
+
 		group, innerCtx := errgroup.WithContext(ctx)
 		group.Go(func() error {
 			<-innerCtx.Done()
 			return port.Close()
 		})
 		group.Go(func() error {
+			err = resetSensor(innerCtx, port)
+			if err != nil {
+				return err
+			}
+
 			s.pressureMutex.Lock()
 			initialPressure := s.pressure
 			s.pressureMutex.Unlock()

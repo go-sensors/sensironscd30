@@ -33,6 +33,16 @@ func numberToWord(number float64) (byte, byte, byte) {
 	return msb, lsb, crc
 }
 
+func softReset(ctx context.Context, port coreio.Port) error {
+	_, err := port.Write([]byte{0xD3, 0x04})
+	return err
+}
+
+func stopContinuousMeasurement(ctx context.Context, port coreio.Port) error {
+	_, err := port.Write([]byte{0x01, 0x04})
+	return err
+}
+
 func triggerContinuousMeasurement(ctx context.Context, port coreio.Port, pressure units.Pressure) error {
 	mBarMSB, mBarLSB, mBarCRC := numberToWord(pressure.Hectopascals())
 	_, err := port.Write([]byte{0x00, 0x10, mBarMSB, mBarLSB, mBarCRC})
