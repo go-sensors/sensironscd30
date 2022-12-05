@@ -70,6 +70,32 @@ func getDataReadyStatus(ctx context.Context, port coreio.Port) (bool, error) {
 	return ready, nil
 }
 
+func setForcedRecalibrationValue(ctx context.Context, port coreio.Port, forcedRecalibrationValue units.Concentration) error {
+	offsetMSB, offsetLSB, offsetCRC := numberToWord(forcedRecalibrationValue.PartsPerMillion())
+	_, err := port.Write([]byte{0x52, 0x04, offsetMSB, offsetLSB, offsetCRC})
+	return err
+}
+
+func getTemperatureOffset(ctx context.Context, port coreio.Port) (units.Temperature, error) {
+	_, err := port.Write([]byte{0x54, 0x03})
+	if err != nil {
+		return 0, err
+	}
+
+	data, err := readWords(port, 1)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to read temperature offset")
+	}
+	temperatureOffset := units.Temperature(float64(data[0]) / 100 * float64(units.DegreeCelsius))
+	return temperatureOffset, nil
+}
+
+func setTemperatureOffset(ctx context.Context, port coreio.Port, temperatureOffset units.Temperature) error {
+	offsetMSB, offsetLSB, offsetCRC := numberToWord(temperatureOffset.DegreesCelsius() * 100)
+	_, err := port.Write([]byte{0x54, 0x03, offsetMSB, offsetLSB, offsetCRC})
+	return err
+}
+
 type readings struct {
 	CO2              units.Concentration
 	Temperature      units.Temperature

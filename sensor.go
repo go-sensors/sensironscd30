@@ -20,14 +20,17 @@ const (
 
 // Sensor represents a configured Sensiron SCD30 gas sensor
 type Sensor struct {
-	gases              chan *gas.Concentration
-	temperatures       chan *units.Temperature
-	relativeHumidities chan *units.RelativeHumidity
-	portFactory        coreio.PortFactory
-	reconnectTimeout   time.Duration
-	errorHandlerFunc   ShouldTerminate
-	pressure           units.Pressure
-	pressureMutex      *sync.Mutex
+	gases                                   chan *gas.Concentration
+	temperatures                            chan *units.Temperature
+	relativeHumidities                      chan *units.RelativeHumidity
+	portFactory                             coreio.PortFactory
+	reconnectTimeout                        time.Duration
+	errorHandlerFunc                        ShouldTerminate
+	pressure                                units.Pressure
+	mutex                                   *sync.Mutex
+	shouldForceRecalibration                bool
+	baselineConcentration                   units.Concentration
+	forcedRecalibrationEqualizationDuration time.Duration
 }
 
 // Option is a configured option that may be applied to a Sensor
@@ -40,7 +43,7 @@ func NewSensor(portFactory coreio.PortFactory, options ...*Option) *Sensor {
 	gases := make(chan *gas.Concentration)
 	temperatures := make(chan *units.Temperature)
 	relativeHumidities := make(chan *units.RelativeHumidity)
-	pressureMutex := &sync.Mutex{}
+	mutex := &sync.Mutex{}
 	s := &Sensor{
 		gases:              gases,
 		temperatures:       temperatures,
@@ -49,7 +52,7 @@ func NewSensor(portFactory coreio.PortFactory, options ...*Option) *Sensor {
 		reconnectTimeout:   DefaultReconnectTimeout,
 		errorHandlerFunc:   nil,
 		pressure:           0 * units.Pascal,
-		pressureMutex:      pressureMutex,
+		mutex:              mutex,
 	}
 	for _, o := range options {
 		o.apply(s)
@@ -62,6 +65,19 @@ func WithReconnectTimeout(timeout time.Duration) *Option {
 	return &Option{
 		apply: func(s *Sensor) {
 			s.reconnectTimeout = timeout
+		},
+	}
+}
+
+// WithForcedRecalibrationValue specifies the value to use as the sensor's baseline for CO2 concentration
+func WithForcedRecalibrationValue(
+	baselineConcentration units.Concentration,
+	forcedRecalibrationEqualizationDuration time.Duration) *Option {
+	return &Option{
+		apply: func(s *Sensor) {
+			s.shouldForceRecalibration = true
+			s.baselineConcentration = baselineConcentration
+			s.forcedRecalibrationEqualizationDuration = forcedRecalibrationEqualizationDuration
 		},
 	}
 }
@@ -139,14 +155,16 @@ func (s *Sensor) Run(ctx context.Context) error {
 				return err
 			}
 
-			s.pressureMutex.Lock()
+			s.mutex.Lock()
 			initialPressure := s.pressure
-			s.pressureMutex.Unlock()
+			s.mutex.Unlock()
 
 			err = triggerContinuousMeasurement(innerCtx, port, initialPressure)
 			if err != nil {
 				return errors.Wrap(err, "failed to trigger continuous measurement")
 			}
+
+			measurementStarted := time.Now()
 
 			err = setMeasurementInterval(innerCtx, port, measurementInterval)
 			if err != nil {
@@ -154,11 +172,23 @@ func (s *Sensor) Run(ctx context.Context) error {
 			}
 
 			for {
-				s.pressureMutex.Lock()
+				s.mutex.Lock()
 				pressure := s.pressure
-				s.pressureMutex.Unlock()
+				shouldForceRecalibration := s.shouldForceRecalibration
+				s.mutex.Unlock()
 
-				ready, err := getDataReadyStatus(ctx, port)
+				if shouldForceRecalibration && time.Since(measurementStarted) >= s.forcedRecalibrationEqualizationDuration {
+					err = setForcedRecalibrationValue(innerCtx, port, s.baselineConcentration)
+					if err != nil {
+						return errors.Wrap(err, "failed to set forced recalibration value")
+					}
+
+					s.mutex.Lock()
+					s.shouldForceRecalibration = false
+					s.mutex.Unlock()
+				}
+
+				ready, err := getDataReadyStatus(innerCtx, port)
 				if err != nil {
 					return errors.Wrap(err, "failed to get data ready status")
 				}
@@ -167,7 +197,7 @@ func (s *Sensor) Run(ctx context.Context) error {
 					continue
 				}
 
-				readings, err := readMeasurement(ctx, port, pressure)
+				readings, err := readMeasurement(innerCtx, port, pressure)
 				if err != nil {
 					return errors.Wrap(err, "failed to read measurement")
 				}
@@ -216,6 +246,43 @@ func (s *Sensor) Run(ctx context.Context) error {
 		case <-time.After(s.reconnectTimeout):
 		}
 	}
+}
+
+func (s *Sensor) GetTemperatureOffset(ctx context.Context) (*units.Temperature, error) {
+	port, err := s.portFactory.Open()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to open port")
+	}
+
+	defer resetSensor(context.Background(), port)
+
+	err = resetSensor(ctx, port)
+	if err != nil {
+		return nil, err
+	}
+
+	temperatureOffset, err := getTemperatureOffset(ctx, port)
+	if err != nil {
+		return nil, err
+	}
+
+	return &temperatureOffset, nil
+}
+
+func (s *Sensor) SetTemperatureOffset(ctx context.Context, temperatureOffset units.Temperature) error {
+	port, err := s.portFactory.Open()
+	if err != nil {
+		return errors.Wrap(err, "failed to open port")
+	}
+
+	defer resetSensor(context.Background(), port)
+
+	err = resetSensor(ctx, port)
+	if err != nil {
+		return err
+	}
+
+	return setTemperatureOffset(ctx, port, temperatureOffset)
 }
 
 // Concentrations returns a channel of concentration readings as they become available from the sensor
@@ -268,8 +335,8 @@ func (*Sensor) RelativeHumiditySpecs() []*humidity.RelativeHumiditySpec {
 }
 
 func (s *Sensor) HandlePressure(ctx context.Context, pressure *units.Pressure) error {
-	s.pressureMutex.Lock()
-	defer s.pressureMutex.Unlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	s.pressure = *pressure
 

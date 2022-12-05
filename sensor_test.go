@@ -305,6 +305,109 @@ func Test_Run_fails_to_set_measurement_interval(t *testing.T) {
 	assert.ErrorContains(t, err, "failed to set measurement interval")
 }
 
+func Test_Run_fails_to_set_forced_recalibration_value(t *testing.T) {
+	// Arrange
+	ctrl := gomock.NewController(t)
+	portFactory := mocks.NewMockPortFactory(ctrl)
+
+	port := mocks.NewMockPort(ctrl)
+	portFactory.EXPECT().
+		Open().
+		Return(port, nil)
+
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x46, 0x00, 0x00, 0x02, 0xE3}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x52, 0x04, 0x03, 0xE7, 0xFA}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Close().
+		Return(nil)
+
+	sensor := sensironscd30.NewSensor(portFactory,
+		sensironscd30.WithRecoverableErrorHandler(func(err error) bool { return true }),
+		sensironscd30.WithForcedRecalibrationValue(999*units.PartPerMillion, 0))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	group, ctx := errgroup.WithContext(ctx)
+
+	// Act
+	group.Go(func() error {
+		return sensor.Run(ctx)
+	})
+	err := group.Wait()
+
+	// Assert
+	assert.ErrorContains(t, err, "failed to set forced recalibration value")
+}
+
+func Test_Run_successfully_sets_forced_recalibration_value(t *testing.T) {
+	// Arrange
+	ctrl := gomock.NewController(t)
+	portFactory := mocks.NewMockPortFactory(ctrl)
+
+	port := mocks.NewMockPort(ctrl)
+	portFactory.EXPECT().
+		Open().
+		Return(port, nil)
+
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x01, 0x04}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x00, 0x10, 0x00, 0x00, 0x81}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x46, 0x00, 0x00, 0x02, 0xE3}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x52, 0x04, 0x03, 0xE7, 0xFA}).
+		Return(0, nil)
+	port.EXPECT().
+		Write([]byte{0x02, 0x02}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Write([]byte{0xD3, 0x04}).
+		Return(0, errors.New("boom"))
+	port.EXPECT().
+		Close().
+		Return(nil)
+
+	sensor := sensironscd30.NewSensor(portFactory,
+		sensironscd30.WithRecoverableErrorHandler(func(err error) bool { return true }),
+		sensironscd30.WithForcedRecalibrationValue(999*units.PartPerMillion, 0))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	group, ctx := errgroup.WithContext(ctx)
+
+	// Act
+	group.Go(func() error {
+		return sensor.Run(ctx)
+	})
+	err := group.Wait()
+
+	// Assert
+	assert.ErrorContains(t, err, "failed to get data ready status")
+}
+
 func Test_Run_fails_to_get_data_ready_status(t *testing.T) {
 	// Arrange
 	ctrl := gomock.NewController(t)
